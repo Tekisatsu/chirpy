@@ -22,9 +22,7 @@ func middlewareCors(next http.Handler) http.Handler {
 }
 func main () {
 	mux := NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-		})
+	mux.Handle("/",http.FileServer(http.Dir(".")))
 	corsMux := middlewareCors(mux)
 	srv := &http.Server {
 		Addr: "localhost:8080",
