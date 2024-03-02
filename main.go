@@ -22,8 +22,13 @@ func middlewareCors(next http.Handler) http.Handler {
 }
 func main () {
 	mux := NewServeMux()
-	mux.Handle("/",http.FileServer(http.Dir(".")))
+	mux.Handle("/app/",http.StripPrefix("/app/",http.FileServer(http.Dir("."))))
 	mux.Handle("assets/logo.png",http.FileServer(http.Dir("./assets/logo.png")))
+	mux.HandleFunc("/healthz",func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-type","text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
 	corsMux := middlewareCors(mux)
 	srv := &http.Server {
 		Addr: "localhost:8080",
