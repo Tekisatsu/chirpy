@@ -40,19 +40,23 @@ func middlewareCors(next http.Handler) http.Handler {
 func main () {
 	apiCfg := apiConfig{}
 	r := chi.NewRouter()
+	apirouter := chi.NewRouter()
+	adminrouter := chi.NewRouter()
+	r.Mount("/api",apirouter)
+	r.Mount("/admin",adminrouter)
 	r.Handle("/app",apiCfg.hitsCounter(http.StripPrefix("/app",http.FileServer(http.Dir(".")))))
 	r.Handle("/app/*",apiCfg.hitsCounter(http.StripPrefix("/app",http.FileServer(http.Dir(".")))))
 	r.Handle("/assets/logo.png",apiCfg.hitsCounter(http.FileServer(http.Dir("./assets/logo.png"))))
-	r.Get("/healthz",func(w http.ResponseWriter, r *http.Request) {
+	apirouter.Get("/healthz",func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-type","text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request){
-		w.Header().Set("Content-type","text/plain; charset=utf-8")
-		w.Write([]byte(fmt.Sprintf("Hits: %v",apiCfg.fileserverHits)))
+	adminrouter.Get("/metrics", func(w http.ResponseWriter, r *http.Request){
+		w.Header().Set("Content-type","text/html")
+		w.Write([]byte(fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>",apiCfg.fileserverHits)))
 	})
-	r.Handle("/reset", apiCfg.resetHitsCounter())
+	apirouter.Handle("/reset", apiCfg.resetHitsCounter())
 	corsMux := middlewareCors(r)
 	srv := &http.Server {
 		Addr: "localhost:8080",
