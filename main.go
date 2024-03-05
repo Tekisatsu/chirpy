@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,8 +23,48 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 		cfg.fileserverHits = 0
 	}) 
 }
-func NewServeMux() *http.ServeMux {
-	return http.NewServeMux()
+func postChirp(w http.ResponseWriter,r *http.Request) {
+	type parameter struct {
+		Body string `json:"body"`
+	}
+	type returnVals struct {
+		Error string `json:"error,omitempty"`
+		Valid bool `json:"valid,omitempty"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameter %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	if len(params.Body) > 140 {
+		resp := returnVals {
+			Error: "Chirp is too long",
+		}
+		dat, err := json.Marshal(resp)
+		if err != nil {
+			log.Printf("Error unmarshalling JSON %s",err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","application/json")
+		w.WriteHeader(400)
+		w.Write(dat)
+	}else{resp := returnVals {
+		Valid: true,
+		}
+		dat,err := json.Marshal(resp)
+		if err != nil {
+			log.Printf("Error unmarshalling JSON: %s",err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+		}
 }
 func middlewareCors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,5 +103,6 @@ func main () {
 		Addr: "localhost:8080",
 		Handler: corsMux,
 	}
+	apirouter.Post("/validate_chirp",postChirp)
 	log.Fatal(srv.ListenAndServe())
 }
