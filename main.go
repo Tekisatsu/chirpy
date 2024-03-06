@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"github.com/go-chi/chi/v5"
 )
 	
@@ -29,8 +30,9 @@ func postChirp(w http.ResponseWriter,r *http.Request) {
 	}
 	type returnVals struct {
 		Error string `json:"error,omitempty"`
-		Valid bool `json:"valid,omitempty"`
+		CleanedBody string `json:"cleaned_body,omitempty"`
 	}
+	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
 	params := parameter{}
 	err := decoder.Decode(&params)
@@ -52,8 +54,9 @@ func postChirp(w http.ResponseWriter,r *http.Request) {
 		w.Header().Set("Content-type","application/json")
 		w.WriteHeader(400)
 		w.Write(dat)
-	}else{resp := returnVals {
-		Valid: true,
+	}else{cf := chirpFilter(&params.Body)
+		resp := returnVals {
+		CleanedBody: cf,
 		}
 		dat,err := json.Marshal(resp)
 		if err != nil {
@@ -65,6 +68,17 @@ func postChirp(w http.ResponseWriter,r *http.Request) {
 		w.WriteHeader(200)
 		w.Write(dat)
 		}
+}
+func chirpFilter (msg *string) string {
+	splitMsg := strings.Split(*msg," ")
+	for i,word := range splitMsg {
+		switch {
+		case strings.ToLower(word) == "kerfuffle": splitMsg[i]="****"
+		case strings.ToLower(word) == "sharbert": splitMsg[i]="****"
+		case strings.ToLower(word) == "fornax": splitMsg[i]="****"
+		}
+	}
+	return strings.Join(splitMsg," ")
 }
 func middlewareCors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
