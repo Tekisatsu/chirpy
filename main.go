@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"github.com/go-chi/chi/v5"
+	"github.com/tekisatsu/chirpy/internal/database"
 )
-	
+type Server struct {
+	DB *database.DB
+}
 type apiConfig struct {
 	fileserverHits int
 }
@@ -24,13 +27,9 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 		cfg.fileserverHits = 0
 	}) 
 }
-func postChirp(w http.ResponseWriter,r *http.Request) {
+func (s *Server)postChirps(w http.ResponseWriter,r *http.Request) {
 	type parameter struct {
 		Body string `json:"body"`
-	}
-	type returnVals struct {
-		Error string `json:"error,omitempty"`
-		CleanedBody string `json:"cleaned_body,omitempty"`
 	}
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
@@ -42,30 +41,31 @@ func postChirp(w http.ResponseWriter,r *http.Request) {
 		return
 	}
 	if len(params.Body) > 140 {
-		resp := returnVals {
-			Error: "Chirp is too long",
-		}
-		dat, err := json.Marshal(resp)
+		dat, err := json.Marshal("Error: Chirp too long")
 		if err != nil {
-			log.Printf("Error unmarshalling JSON %s",err)
+			log.Printf("Error marshalling JSON %s",err)
 			w.WriteHeader(500)
 			return
 		}
 		w.Header().Set("Content-type","application/json")
 		w.WriteHeader(400)
 		w.Write(dat)
-	}else{cf := chirpFilter(&params.Body)
-		resp := returnVals {
-		CleanedBody: cf,
-		}
-		dat,err := json.Marshal(resp)
+	}else{
+		cf := chirpFilter(&params.Body)
+		newChirp,err := s.DB.CreateChirp(cf)
 		if err != nil {
-			log.Printf("Error unmarshalling JSON: %s",err)
+			log.Printf("Error creating Chirp: %s",err)
+			w.WriteHeader(500)
+			return
+		}
+		dat,err := json.Marshal(newChirp)
+		if err != nil {
+			log.Printf("Error marshaling json: %v",err)
 			w.WriteHeader(500)
 			return
 		}
 		w.Header().Set("Content-type","application/json")
-		w.WriteHeader(200)
+		w.WriteHeader(201)
 		w.Write(dat)
 		}
 }
@@ -80,6 +80,22 @@ func chirpFilter (msg *string) string {
 	}
 	return strings.Join(splitMsg," ")
 }
+func (s *Server) getChirps (w http.ResponseWriter,r *http.Request) {
+	chirps,err := s.DB.GetChirps()
+	if err != nil {
+		log.Printf("Error getting Chirps: %v",err)
+		w.WriteHeader(500)
+		return
+	}
+	dat,errM := json.Marshal(chirps)
+	if errM != nil {
+		log.Printf("Error marshalling Chirps: %v",errM)
+		return
+	}
+	w.Header().Set("Content-type","application/json")
+	w.WriteHeader(200)
+	w.Write(dat)
+}
 func middlewareCors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -93,6 +109,13 @@ func middlewareCors(next http.Handler) http.Handler {
 	})
 }
 func main () {
+	db, err := database.NewDb("database.json")
+	if err != nil {
+		log.Fatalf("Failed to connect to DB: %v",err)
+	}
+	server := &Server{
+		DB: db,
+	}
 	apiCfg := apiConfig{}
 	r := chi.NewRouter()
 	apirouter := chi.NewRouter()
@@ -117,6 +140,7 @@ func main () {
 		Addr: "localhost:8080",
 		Handler: corsMux,
 	}
-	apirouter.Post("/validate_chirp",postChirp)
+	apirouter.Post("/chirps",server.postChirps)
+	apirouter.Get("/chirps",server.getChirps)
 	log.Fatal(srv.ListenAndServe())
 }
