@@ -78,6 +78,18 @@ func (db *DB) GetChirps () ([]Chirp,error) {
 	})
 	return chirps,nil
 }
+func (db *DB) GetChirp (id int) (Chirp,error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbStructure,err := db.LoadDb()
+	if err != nil {
+		return Chirp{},err
+	}
+	if val,ok := dbStructure.Chirps[id];ok {
+		return val,nil
+	}
+	return Chirp{},errors.New("Chirp not found")
+}
 func NewDb(path string) (*DB, error) {
 	_, err := os.Stat(path)
 	if err != nil {

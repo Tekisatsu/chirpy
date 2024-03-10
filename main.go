@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"github.com/go-chi/chi/v5"
 	"github.com/tekisatsu/chirpy/internal/database"
@@ -96,6 +97,27 @@ func (s *Server) getChirps (w http.ResponseWriter,r *http.Request) {
 	w.WriteHeader(200)
 	w.Write(dat)
 }
+func (s *Server) getChirp (w http.ResponseWriter,r *http.Request) {
+	idParam,errC := strconv.Atoi(chi.URLParam(r,"id"))
+	if errC != nil {
+		log.Printf("Error converting URLParam to int: %v",errC)
+		return
+	}
+	chirp,err := s.DB.GetChirp(idParam)
+	if err != nil {
+		log.Printf("%v",err)
+		w.WriteHeader(404)
+		return
+	}
+	dat,errM := json.Marshal(chirp)
+	if errM != nil {
+		log.Printf("Error mashalling Chirp: %v",err)
+		return
+	}
+	w.Header().Set("Content-type","Application/json")
+	w.WriteHeader(200)
+	w.Write(dat)
+}
 func middlewareCors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -142,5 +164,6 @@ func main () {
 	}
 	apirouter.Post("/chirps",server.postChirps)
 	apirouter.Get("/chirps",server.getChirps)
+	apirouter.Get("/chirps/{id}",server.getChirp)
 	log.Fatal(srv.ListenAndServe())
 }
