@@ -14,10 +14,39 @@ type DB struct {
 }
 type DBStructure struct {
 	Chirps map[int]Chirp `json:"chirps"`
+	User User
+	UserAmount int `json:"usreamount"`
 }
 type Chirp struct {
 	Id int `json:"id"`
 	Body string `json:"body"`
+}
+type User struct {
+	Id int `json:"id"`
+	Email string `json:"email"`
+}
+func (db *DB)CreateUser(email string)(User,error){
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbstucture,err := db.LoadDb()
+	if err != nil {
+		return User{},err
+	}
+	maxId:=dbstucture.UserAmount+1
+	dbstucture.UserAmount = maxId
+	newUser := User{
+		Email: email,
+		Id: maxId,
+	}
+	dat,errM := json.Marshal(dbstucture)
+	if errM != nil {
+		return User{},errM
+	}
+	errW := os.WriteFile(db.path,dat,0600)
+	if errW != nil {
+		return User{},errW
+	}
+	return newUser,nil
 }
 func (db *DB)CreateChirp(body string)(Chirp,error){
 	db.mux.Lock()

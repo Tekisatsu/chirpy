@@ -28,6 +28,37 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 		cfg.fileserverHits = 0
 	}) 
 }
+func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
+	type parameter struct {
+		Email string `json:"email"`
+	}
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding params: %v",err)
+		w.WriteHeader(500)
+		return
+	} else {
+		newUser,err := s.DB.CreateUser(params.Email)
+		if err != nil {
+			log.Printf("Error creating user: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		dat,errM := json.Marshal(newUser)
+		if errM != nil {
+			log.Printf("Error marshalling user: %v",errM)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","application/json")
+		w.WriteHeader(201)
+		w.Write(dat)
+	}
+	
+}
 func (s *Server)postChirps(w http.ResponseWriter,r *http.Request) {
 	type parameter struct {
 		Body string `json:"body"`
@@ -165,5 +196,6 @@ func main () {
 	apirouter.Post("/chirps",server.postChirps)
 	apirouter.Get("/chirps",server.getChirps)
 	apirouter.Get("/chirps/{id}",server.getChirp)
+	apirouter.Post("/users",server.createUser)
 	log.Fatal(srv.ListenAndServe())
 }
