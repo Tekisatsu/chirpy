@@ -31,6 +31,7 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Email string `json:"email"`
+		Password string `json:"password"`
 	}
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
@@ -41,7 +42,7 @@ func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	} else {
-		newUser,err := s.DB.CreateUser(params.Email)
+		newUser,err := s.DB.CreateUser(params.Email,params.Password)
 		if err != nil {
 			log.Printf("Error creating user: %v",err)
 			w.WriteHeader(500)
@@ -59,7 +60,37 @@ func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	
 }
-func (s *Server)postChirps(w http.ResponseWriter,r *http.Request) {
+func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
+	type parameter struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding params: %v",err)
+		w.WriteHeader(500)
+		return
+	}else{valid,errV := s.DB.UserLogin(params.Email,params.Password)
+		if errV != nil {
+			log.Printf("Error validating: %v",errV)
+			w.WriteHeader(401)
+			return
+		}
+		dat,errM := json.Marshal(valid)
+		if errM != nil {
+			log.Printf("Error Marshalling JSON: %v",errM)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+	}
+}
+func (s *Server)postChirps(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Body string `json:"body"`
 	}
@@ -197,5 +228,6 @@ func main () {
 	apirouter.Get("/chirps",server.getChirps)
 	apirouter.Get("/chirps/{id}",server.getChirp)
 	apirouter.Post("/users",server.createUser)
+	apirouter.Post("/login",server.userLogin)
 	log.Fatal(srv.ListenAndServe())
 }

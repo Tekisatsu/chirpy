@@ -6,57 +6,112 @@ import (
 	"os"
 	"sort"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type DB struct {
 	path string
 	mux *sync.RWMutex
 }
+type DBSuper struct {
+	DBStructure DBStructure
+	UserInternal []UserInternal
+}
 type DBStructure struct {
 	Chirps map[int]Chirp `json:"chirps"`
-	User User
+	User UserResponse
 	UserAmount int `json:"usreamount"`
 }
 type Chirp struct {
 	Id int `json:"id"`
 	Body string `json:"body"`
 }
-type User struct {
+type UserResponse struct {
 	Id int `json:"id"`
 	Email string `json:"email"`
 }
-func (db *DB)CreateUser(email string)(User,error){
+type UserInternal struct {
+	Id int `json:"id"`
+	Email string `json:"email"`
+	Password []byte `json:"password"`
+}
+func (db *DB) createUserPassword (pword string)([]byte,error) {
+	hash,err := bcrypt.GenerateFromPassword([]byte(pword),14)
+	if err != nil {
+		return nil,err
+	}
+	return hash,nil
+}
+func (db *DB)CreateUser(email,password string)(UserResponse,error){
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	dbstucture,err := db.LoadDb()
+	dbSuper,err := db.loadDb()
 	if err != nil {
-		return User{},err
+		return UserResponse{},err
 	}
-	maxId:=dbstucture.UserAmount+1
-	dbstucture.UserAmount = maxId
-	newUser := User{
+	for _,user := range dbSuper.UserInternal {
+		if user.Email == email {
+			return UserResponse{},errors.New("Email already in use")
+		}
+	}
+	maxId:= dbSuper.DBStructure.UserAmount+1
+	dbSuper.DBStructure.UserAmount = maxId
+	pWord,errP := db.createUserPassword(password)
+	if errP != nil {
+		return UserResponse{},errP
+	}
+	newUser := UserResponse{
 		Email: email,
 		Id: maxId,
 	}
-	dat,errM := json.Marshal(dbstucture)
+	newInternalUser := UserInternal{
+		Email: email,
+		Id: maxId,
+		Password: pWord,
+	}
+	dbSuper.UserInternal = append(dbSuper.UserInternal, newInternalUser)
+	dat,errM := json.Marshal(dbSuper)
 	if errM != nil {
-		return User{},errM
+		return UserResponse{},errM
 	}
 	errW := os.WriteFile(db.path,dat,0600)
 	if errW != nil {
-		return User{},errW
+		return UserResponse{},errW
 	}
 	return newUser,nil
 }
+func (db *DB) UserLogin (email,password string) (UserResponse,error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbSuper,err := db.loadDb()
+	if err != nil {
+		return UserResponse{},err
+	}
+	for _,user := range dbSuper.UserInternal {
+		if user.Email == email {
+			err := bcrypt.CompareHashAndPassword(user.Password, []byte(password))
+			if err != nil {
+				return UserResponse{},errors.New("Invalid information")
+			} else {
+				return struct{
+					Id int `json:"id"`
+					Email string `json:"email"`
+				}{Id:user.Id, Email: user.Email},nil
+			}
+		}	
+	}
+	return UserResponse{},errors.New("Invalid information")
+} 
 func (db *DB)CreateChirp(body string)(Chirp,error){
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	dbstructure,err := db.LoadDb()
+	dbSuper,err := db.loadDb()
 	if err != nil {
 		return Chirp{},err
 	}
 	var maxId int
-	for id := range dbstructure.Chirps{
+	for id := range dbSuper.DBStructure.Chirps{
 		if id > maxId {
 			maxId=id
 		}
@@ -66,8 +121,8 @@ func (db *DB)CreateChirp(body string)(Chirp,error){
 		Id: maxId,
 		Body: body,
 	}
-	dbstructure.Chirps[newChirp.Id]=newChirp
-	dat,errM := json.Marshal(dbstructure)
+	dbSuper.DBStructure.Chirps[newChirp.Id]=newChirp
+	dat,errM := json.Marshal(dbSuper)
 	if errM != nil {
 		return Chirp{},errM
 	}
@@ -77,28 +132,28 @@ func (db *DB)CreateChirp(body string)(Chirp,error){
 	}
 	return newChirp,nil
 }
-func (db *DB)LoadDb()(DBStructure,error){
-	dbStructure := DBStructure{}
+func (db *DB)loadDb()(DBSuper,error){
+	dbSuper := DBSuper{}
 	data,errR := os.ReadFile(db.path)
 	if errR != nil {
-		return DBStructure{},errR
+		return DBSuper{},errR
 	}
-	errU := json.Unmarshal(data,&dbStructure)
+	errU := json.Unmarshal(data,&dbSuper)
 	if errU != nil {
-		return DBStructure{},errU
+		return DBSuper{},errU
 	}
-	return dbStructure,nil
+	return dbSuper,nil
 }
 func (db *DB) GetChirps () ([]Chirp,error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	dbstructure,err:=db.LoadDb()
+	dbstructure,err:=db.loadDb()
 	if err != nil {
 		return nil,err
 	}
-	chirps := make([]Chirp ,len(dbstructure.Chirps))
+	chirps := make([]Chirp ,len(dbstructure.DBStructure.Chirps))
 	i := 0
-	for _,chirp:= range dbstructure.Chirps {
+	for _,chirp:= range dbstructure.DBStructure.Chirps {
 		chirps[i] = chirp
 		i++
 	}
@@ -110,11 +165,11 @@ func (db *DB) GetChirps () ([]Chirp,error) {
 func (db *DB) GetChirp (id int) (Chirp,error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	dbStructure,err := db.LoadDb()
+	dbSuper,err := db.loadDb()
 	if err != nil {
 		return Chirp{},err
 	}
-	if val,ok := dbStructure.Chirps[id];ok {
+	if val,ok := dbSuper.DBStructure.Chirps[id];ok {
 		return val,nil
 	}
 	return Chirp{},errors.New("Chirp not found")
