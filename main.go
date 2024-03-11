@@ -7,14 +7,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"os"
+	"time"
 	"github.com/go-chi/chi/v5"
 	"github.com/tekisatsu/chirpy/internal/database"
+	"github.com/joho/godotenv"
+	"github.com/golang-jwt/jwt/v5"
 )
 type Server struct {
 	DB *database.DB
+	apiConfig apiConfig
 }
 type apiConfig struct {
 	fileserverHits int
+	jwtSecret string
 }
 func (cfg *apiConfig) hitsCounter (next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,6 +33,25 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 		w.WriteHeader(http.StatusOK)
 		cfg.fileserverHits = 0
 	}) 
+}
+func (cfg *apiConfig) createToken (id int,expi int) (string,error) {
+	var expirationSeconds int
+	switch {
+	case expi < 86400 && expi != 0: expirationSeconds = expi
+	default: expirationSeconds = 86400
+	}
+	claims := &jwt.RegisteredClaims{
+		Subject: strconv.Itoa(id),
+		IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expirationSeconds))),
+		Issuer: "chirpy",
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256,claims)
+	signedToken,err := token.SignedString(token)
+	if err != nil {
+		return "",err
+	}
+	return signedToken,nil
 }
 func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
@@ -64,6 +89,7 @@ func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Email string `json:"email"`
 		Password string `json:"password"`
+		ExpireSeconds int `json:"expire_in_seconds,omitempty"`
 	}
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
@@ -73,13 +99,29 @@ func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error decoding params: %v",err)
 		w.WriteHeader(500)
 		return
-	}else{valid,errV := s.DB.UserLogin(params.Email,params.Password)
+	}else{
+		valid,errV := s.DB.UserLogin(params.Email,params.Password)
 		if errV != nil {
 			log.Printf("Error validating: %v",errV)
 			w.WriteHeader(401)
 			return
 		}
-		dat,errM := json.Marshal(valid)
+		token,err := s.apiConfig.createToken(valid.Id,params.ExpireSeconds)
+		if err != nil {
+			log.Printf("Error creating token: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		resp := struct{
+			id int
+			email string
+			token string
+		}{
+			id: valid.Id,
+			email: valid.Email,
+			token: token,
+		}
+		dat,errM := json.Marshal(resp)
 		if errM != nil {
 			log.Printf("Error Marshalling JSON: %v",errM)
 			w.WriteHeader(500)
@@ -193,14 +235,19 @@ func middlewareCors(next http.Handler) http.Handler {
 	})
 }
 func main () {
+	godotenv.Load()
+	jwtsecret := os.Getenv("JWT_SECRET")
 	db, err := database.NewDb("database.json")
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %v",err)
 	}
+	apiCfg := apiConfig{
+		jwtSecret: jwtsecret,
+	}
 	server := &Server{
 		DB: db,
+		apiConfig: apiCfg,
 	}
-	apiCfg := apiConfig{}
 	r := chi.NewRouter()
 	apirouter := chi.NewRouter()
 	adminrouter := chi.NewRouter()
