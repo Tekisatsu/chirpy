@@ -2,17 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
-	"os"
 	"time"
 	"github.com/go-chi/chi/v5"
-	"github.com/tekisatsu/chirpy/internal/database"
-	"github.com/joho/godotenv"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
+	"github.com/tekisatsu/chirpy/internal/database"
 )
 type Server struct {
 	DB *database.DB
@@ -20,7 +21,7 @@ type Server struct {
 }
 type apiConfig struct {
 	fileserverHits int
-	jwtSecret string
+	jwtSecret []byte
 }
 func (cfg *apiConfig) hitsCounter (next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,15 +44,29 @@ func (cfg *apiConfig) createToken (id int,expi int) (string,error) {
 	claims := &jwt.RegisteredClaims{
 		Subject: strconv.Itoa(id),
 		IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expirationSeconds))),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expirationSeconds)*time.Second)),
 		Issuer: "chirpy",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256,claims)
-	signedToken,err := token.SignedString(token)
+	signedToken,err := token.SignedString(cfg.jwtSecret)
 	if err != nil {
 		return "",err
 	}
 	return signedToken,nil
+}
+func (cfg *apiConfig)validateToken(tokenStr string) (*jwt.Token,error) {
+	claims := &jwt.RegisteredClaims{}
+	var secretKey = cfg.jwtSecret
+	token,err := jwt.ParseWithClaims(tokenStr,claims,func(token *jwt.Token)(interface{},error){
+		return secretKey,nil
+	})
+	if err != nil {
+		return nil,err
+	}
+	if !token.Valid {
+		return nil, errors.New("Expired token")
+	}
+	return token,nil
 }
 func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
@@ -85,11 +100,62 @@ func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	
 }
+func (s *Server)updateUsers(w http.ResponseWriter, r *http.Request){
+	type parameter struct{
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+	params := parameter{}
+	authHeader := r.Header.Get("Authorization")
+	tokenStr := strings.TrimPrefix(authHeader,"Bearer ")
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding params: %v",err)
+		w.WriteHeader(500)
+		return
+	}
+	time.Sleep(2*time.Second)
+	token,err := s.apiConfig.validateToken(tokenStr)
+	if err != nil {
+		log.Printf("Invalid token: %e",err)
+		w.WriteHeader(401)
+		return
+	} else {
+	claims,ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		log.Printf("Error getting Claims")
+		w.WriteHeader(500)
+		return
+	}
+	id,err := strconv.Atoi(claims.Subject)
+	if err != nil {
+		log.Printf("Error converting subject to id: %e",err)
+		return
+	}
+	updatedUser,errU :=s.DB.UpdateUser(params.Email,params.Password,id)
+	if errU != nil {
+		log.Printf("Error updating user: %e",errU)
+		w.WriteHeader(500)
+		return
+	}
+	dat,errM := json.Marshal(updatedUser)
+	if errM != nil {
+		log.Printf("Error marshalling JSON: %e",errM)
+		w.WriteHeader(500)
+		return
+	}
+	w.Header().Set("Content-type","application/json")
+	w.WriteHeader(200)
+	w.Write(dat)
+	}
+}
 func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Email string `json:"email"`
 		Password string `json:"password"`
-		ExpireSeconds int `json:"expire_in_seconds,omitempty"`
+		ExpireSeconds int `json:"expires_in_seconds,omitempty"`
 	}
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
@@ -112,16 +178,17 @@ func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(500)
 			return
 		}
-		resp := struct{
-			id int
-			email string
-			token string
-		}{
-			id: valid.Id,
-			email: valid.Email,
-			token: token,
+		type resp struct {
+			Token string `json:"token"`
+			Email string `json:"email"`
+			Id int `json:"id"`
 		}
-		dat,errM := json.Marshal(resp)
+		respToken:= resp{
+			Token: token,
+			Email: valid.Email,
+			Id: valid.Id,
+		}
+		dat,errM := json.Marshal(respToken)
 		if errM != nil {
 			log.Printf("Error Marshalling JSON: %v",errM)
 			w.WriteHeader(500)
@@ -236,7 +303,7 @@ func middlewareCors(next http.Handler) http.Handler {
 }
 func main () {
 	godotenv.Load()
-	jwtsecret := os.Getenv("JWT_SECRET")
+	jwtsecret := []byte(os.Getenv("JWT_SECRET"))
 	db, err := database.NewDb("database.json")
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %v",err)
@@ -275,6 +342,7 @@ func main () {
 	apirouter.Get("/chirps",server.getChirps)
 	apirouter.Get("/chirps/{id}",server.getChirp)
 	apirouter.Post("/users",server.createUser)
+	apirouter.Put("/users",server.updateUsers)
 	apirouter.Post("/login",server.userLogin)
 	log.Fatal(srv.ListenAndServe())
 }

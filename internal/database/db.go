@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -103,6 +102,38 @@ func (db *DB) UserLogin (email,password string) (UserResponse,error) {
 	}
 	return UserResponse{},errors.New("Invalid information")
 } 
+func (db *DB)UpdateUser(email,password string, id int)(UserResponse,error){
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbSuper,err := db.loadDb()
+	if err != nil {
+		return UserResponse{}, err
+	}
+	var updatedUser UserResponse
+	for i,user := range dbSuper.UserInternal {
+		if user.Id==id {
+			newPw,err := db.createUserPassword(password)
+			if err != nil {
+				return UserResponse{}, nil
+			}
+			dbSuper.UserInternal[i].Email = email
+			dbSuper.UserInternal[i].Password = newPw
+			updatedUser = UserResponse{
+				Id: user.Id,
+				Email: email,
+			}
+		}
+	}
+	dat,err := json.Marshal(dbSuper)
+	if err != nil {
+		return UserResponse{},err
+	}
+	errW := os.WriteFile(db.path,dat,0600)
+	if errW != nil {
+		return UserResponse{}, errW
+	}
+	return updatedUser,nil
+}
 func (db *DB)CreateChirp(body string)(Chirp,error){
 	db.mux.Lock()
 	defer db.mux.Unlock()
