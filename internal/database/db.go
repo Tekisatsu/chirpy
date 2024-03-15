@@ -6,6 +6,8 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,6 +18,7 @@ type DB struct {
 type DBSuper struct {
 	DBStructure DBStructure
 	UserInternal []UserInternal
+	RevokedTokens map[string]time.Time
 }
 type DBStructure struct {
 	Chirps map[int]Chirp `json:"chirps"`
@@ -34,6 +37,33 @@ type UserInternal struct {
 	Id int `json:"id"`
 	Email string `json:"email"`
 	Password []byte `json:"password"`
+}
+func (db *DB) RefreshToken(tokenStr string) error {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbSuper,err := db.loadDb()
+	if err != nil {
+		return err
+	}
+	if _,ok := dbSuper.RevokedTokens[tokenStr];ok {
+		return errors.New("Revoked token")
+	}
+	return nil
+}
+func (db *DB) RevokeRefreshToken (tokenStr string)error{
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbSuper,err := db.loadDb()
+	if err != nil {
+		return err
+	}
+	dbSuper.RevokedTokens[tokenStr]=time.Now().UTC()
+	dat,err := json.Marshal(dbSuper)
+	if err != nil {
+		return err
+	}
+	os.WriteFile(db.path,dat,0600)
+	return nil
 }
 func (db *DB) createUserPassword (pword string)([]byte,error) {
 	hash,err := bcrypt.GenerateFromPassword([]byte(pword),14)
@@ -209,8 +239,10 @@ func NewDb(path string) (*DB, error) {
 	_, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			initialData := &DBStructure{
-				Chirps: map[int]Chirp{},
+			initialData :=&DBSuper{ 
+				DBStructure: DBStructure{
+					Chirps: map[int]Chirp{},
+			},RevokedTokens: make(map[string]time.Time),
 			}
 			data, err := json.Marshal(initialData)
 			if err != nil {

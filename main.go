@@ -35,17 +35,28 @@ func (cfg *apiConfig) resetHitsCounter () http.Handler {
 		cfg.fileserverHits = 0
 	}) 
 }
-func (cfg *apiConfig) createToken (id int,expi int) (string,error) {
-	var expirationSeconds int
-	switch {
-	case expi < 86400 && expi != 0: expirationSeconds = expi
-	default: expirationSeconds = 86400
-	}
+func (cfg *apiConfig) createAccessToken (id int) (string,error) {
+	var expirationSeconds int = 3600 //one hour
 	claims := &jwt.RegisteredClaims{
 		Subject: strconv.Itoa(id),
 		IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expirationSeconds)*time.Second)),
-		Issuer: "chirpy",
+		Issuer: "chirpy-access",
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256,claims)
+	signedToken,err := token.SignedString(cfg.jwtSecret)
+	if err != nil {
+		return "",err
+	}
+	return signedToken,nil
+}
+func (cfg *apiConfig) createRefreshToken (id int) (string,error) {
+	var expirationSeconds int = 86400*60 //60 days
+	claims := &jwt.RegisteredClaims{
+		Subject: strconv.Itoa(id),
+		IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expirationSeconds)*time.Second)),
+		Issuer: "chirpy-refresh",
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256,claims)
 	signedToken,err := token.SignedString(cfg.jwtSecret)
@@ -67,6 +78,87 @@ func (cfg *apiConfig)validateToken(tokenStr string) (*jwt.Token,error) {
 		return nil, errors.New("Expired token")
 	}
 	return token,nil
+}
+func (s *Server)tokenRefresh(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")	
+	tokenStr := strings.TrimPrefix(authHeader,"Bearer ")
+	token,err := s.apiConfig.validateToken(tokenStr)
+	if err != nil {
+		log.Printf("Invalid token: %e",err)
+		w.WriteHeader(401)
+		return
+	} else {
+		claims,ok := token.Claims.(*jwt.RegisteredClaims)
+		if !ok {
+			log.Printf("Error getting Claims")
+			w.WriteHeader(500)
+			return
+		}
+		if claims.Issuer != "chirpy-refresh" {
+			log.Printf("Invalid issuer")
+			w.WriteHeader(401)
+			return
+		}
+		err := s.DB.RefreshToken(tokenStr)
+		if err != nil {
+			log.Printf("Invalid token: %v",err)
+			w.WriteHeader(401)
+			return
+		}
+		id,err := strconv.Atoi(claims.Subject)
+		if err != nil {
+			log.Printf("Error getting id: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		newToken,err := s.apiConfig.createAccessToken(id)
+		if err != nil {
+			log.Printf("Error creating token: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		result := struct{
+			AccessToken string `json:"token"`
+		}{AccessToken: newToken}
+		dat, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("Error marshalling JSON: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","Application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
+	}
+}
+func (s *Server)revokeToken(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")	
+	tokenStr := strings.TrimPrefix(authHeader,"Bearer ")
+	token,err := s.apiConfig.validateToken(tokenStr)
+	if err != nil {
+		log.Printf("Invalid token: %e",err)
+		w.WriteHeader(401)
+		return
+	} else {
+		claims,ok := token.Claims.(*jwt.RegisteredClaims)
+		if !ok {
+			log.Printf("Error getting Claims")
+			w.WriteHeader(500)
+			return
+		}
+		if claims.Issuer != "chirpy-refresh" {
+			log.Printf("Invalid issuer")
+			w.WriteHeader(401)
+			return
+		}
+		err := s.DB.RevokeRefreshToken(tokenStr)
+		if err != nil {
+			log.Printf("Error revoking token: %v",err)
+			w.WriteHeader(401)
+			return
+		}
+		w.WriteHeader(200)
+	}
 }
 func (s *Server)createUser(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
@@ -116,46 +208,50 @@ func (s *Server)updateUsers(w http.ResponseWriter, r *http.Request){
 		w.WriteHeader(500)
 		return
 	}
-	time.Sleep(2*time.Second)
 	token,err := s.apiConfig.validateToken(tokenStr)
 	if err != nil {
 		log.Printf("Invalid token: %e",err)
 		w.WriteHeader(401)
 		return
 	} else {
-	claims,ok := token.Claims.(*jwt.RegisteredClaims)
-	if !ok {
-		log.Printf("Error getting Claims")
-		w.WriteHeader(500)
-		return
-	}
-	id,err := strconv.Atoi(claims.Subject)
-	if err != nil {
-		log.Printf("Error converting subject to id: %e",err)
-		return
-	}
-	updatedUser,errU :=s.DB.UpdateUser(params.Email,params.Password,id)
-	if errU != nil {
-		log.Printf("Error updating user: %e",errU)
-		w.WriteHeader(500)
-		return
-	}
-	dat,errM := json.Marshal(updatedUser)
-	if errM != nil {
-		log.Printf("Error marshalling JSON: %e",errM)
-		w.WriteHeader(500)
-		return
-	}
-	w.Header().Set("Content-type","application/json")
-	w.WriteHeader(200)
-	w.Write(dat)
+		claims,ok := token.Claims.(*jwt.RegisteredClaims)
+		if !ok {
+			log.Printf("Error getting Claims")
+			w.WriteHeader(500)
+			return
+		}
+		if claims.Issuer != "chirpy-access" {
+			log.Printf("Invalid issuer")
+			w.WriteHeader(401)
+			return
+			}
+		id,err := strconv.Atoi(claims.Subject)
+		if err != nil {
+			log.Printf("Error converting subject to id: %e",err)
+			w.WriteHeader(500)
+			return
+		}
+		updatedUser,errU :=s.DB.UpdateUser(params.Email,params.Password,id)
+		if errU != nil {
+			log.Printf("Error updating user: %e",errU)
+			w.WriteHeader(500)
+			return
+		}
+		dat,errM := json.Marshal(updatedUser)
+		if errM != nil {
+			log.Printf("Error marshalling JSON: %e",errM)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-type","application/json")
+		w.WriteHeader(200)
+		w.Write(dat)
 	}
 }
 func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Email string `json:"email"`
 		Password string `json:"password"`
-		ExpireSeconds int `json:"expires_in_seconds,omitempty"`
 	}
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
@@ -172,19 +268,22 @@ func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(401)
 			return
 		}
-		token,err := s.apiConfig.createToken(valid.Id,params.ExpireSeconds)
+		accessToken,err := s.apiConfig.createAccessToken(valid.Id)
+		refreshToken, err := s.apiConfig.createRefreshToken(valid.Id)
 		if err != nil {
 			log.Printf("Error creating token: %v",err)
 			w.WriteHeader(500)
 			return
 		}
 		type resp struct {
-			Token string `json:"token"`
+			AccessToken string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
 			Email string `json:"email"`
 			Id int `json:"id"`
 		}
 		respToken:= resp{
-			Token: token,
+			AccessToken: accessToken,
+			RefreshToken: refreshToken,
 			Email: valid.Email,
 			Id: valid.Id,
 		}
@@ -344,5 +443,7 @@ func main () {
 	apirouter.Post("/users",server.createUser)
 	apirouter.Put("/users",server.updateUsers)
 	apirouter.Post("/login",server.userLogin)
+	apirouter.Post("/refresh",server.tokenRefresh)
+	apirouter.Post("/revoke",server.revokeToken)
 	log.Fatal(srv.ListenAndServe())
 }
