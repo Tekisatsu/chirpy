@@ -302,43 +302,63 @@ func (s *Server)postChirps(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Body string `json:"body"`
 	}
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	params := parameter{}
-	err := decoder.Decode(&params)
+	authHeader := r.Header.Get("Authorization")	
+	tokenStr := strings.TrimPrefix(authHeader,"Bearer ")
+	token,err := s.apiConfig.validateToken(tokenStr)
 	if err != nil {
-		log.Printf("Error decoding parameter %s", err)
-		w.WriteHeader(500)
+		log.Printf("Invalid token: %e",err)
+		w.WriteHeader(401)
 		return
-	}
-	if len(params.Body) > 140 {
-		dat, err := json.Marshal("Error: Chirp too long")
-		if err != nil {
-			log.Printf("Error marshalling JSON %s",err)
+	} else {
+		claims,ok := token.Claims.(*jwt.RegisteredClaims)
+		if !ok {
+			log.Printf("Error getting Claims")
 			w.WriteHeader(500)
 			return
 		}
-		w.Header().Set("Content-type","application/json")
-		w.WriteHeader(400)
-		w.Write(dat)
-	}else{
-		cf := chirpFilter(&params.Body)
-		newChirp,err := s.DB.CreateChirp(cf)
-		if err != nil {
-			log.Printf("Error creating Chirp: %s",err)
+		authorId,errI := strconv.Atoi(claims.Subject)
+		if errI != nil {
+			log.Printf("Error getting author id: %v",err)
 			w.WriteHeader(500)
 			return
 		}
-		dat,err := json.Marshal(newChirp)
+		defer r.Body.Close()
+		decoder := json.NewDecoder(r.Body)
+		params := parameter{}
+		err := decoder.Decode(&params)
 		if err != nil {
-			log.Printf("Error marshaling json: %v",err)
+			log.Printf("Error decoding parameter %s", err)
 			w.WriteHeader(500)
 			return
 		}
-		w.Header().Set("Content-type","application/json")
-		w.WriteHeader(201)
-		w.Write(dat)
-		}
+		if len(params.Body) > 140 {
+			dat, err := json.Marshal("Error: Chirp too long")
+			if err != nil {
+				log.Printf("Error marshalling JSON %s",err)
+				w.WriteHeader(500)
+				return
+			}
+			w.Header().Set("Content-type","application/json")
+			w.WriteHeader(400)
+			w.Write(dat)
+		}else{
+			cf := chirpFilter(&params.Body)
+			newChirp,err := s.DB.CreateChirp(cf,authorId)
+			if err != nil {
+				log.Printf("Error creating Chirp: %s",err)
+				w.WriteHeader(500)
+				return
+			}
+			dat,err := json.Marshal(newChirp)
+			if err != nil {
+				log.Printf("Error marshaling json: %v",err)
+				w.WriteHeader(500)
+				return
+			}
+			w.Header().Set("Content-type","application/json")
+			w.WriteHeader(201)
+			w.Write(dat)
+	}	}
 }
 func chirpFilter (msg *string) string {
 	splitMsg := strings.Split(*msg," ")

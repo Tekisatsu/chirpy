@@ -28,6 +28,7 @@ type DBStructure struct {
 type Chirp struct {
 	Id int `json:"id"`
 	Body string `json:"body"`
+	AuthorId int `json:"author_id"`
 }
 type UserResponse struct {
 	Id int `json:"id"`
@@ -164,7 +165,7 @@ func (db *DB)UpdateUser(email,password string, id int)(UserResponse,error){
 	}
 	return updatedUser,nil
 }
-func (db *DB)CreateChirp(body string)(Chirp,error){
+func (db *DB)CreateChirp(body string,authorId int)(Chirp,error){
 	db.mux.Lock()
 	defer db.mux.Unlock()
 	dbSuper,err := db.loadDb()
@@ -181,6 +182,7 @@ func (db *DB)CreateChirp(body string)(Chirp,error){
 	newChirp := Chirp{
 		Id: maxId,
 		Body: body,
+		AuthorId: authorId,
 	}
 	dbSuper.DBStructure.Chirps[newChirp.Id]=newChirp
 	dat,errM := json.Marshal(dbSuper)
