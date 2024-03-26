@@ -237,6 +237,31 @@ func (db *DB) GetChirp (id int) (Chirp,error) {
 	}
 	return Chirp{},errors.New("Chirp not found")
 }
+func (db DB) DeleteChirp (id,author_id int) error{
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	dbSuper,err := db.loadDb()
+	e := false
+	if err != nil {
+		return err
+	}
+	if _,ok := dbSuper.DBStructure.Chirps[id];ok {
+		e = true
+	}
+	if e == true {
+		val := dbSuper.DBStructure.Chirps[id]
+		if val.AuthorId != author_id {
+			return errors.New("Id mismatch")
+		}
+		delete(dbSuper.DBStructure.Chirps,id)
+		if _,ok := dbSuper.DBStructure.Chirps[id];ok{
+			return errors.New("Deleting errors")
+		}
+		return nil
+
+	}
+	return errors.New("No Chirp found")
+}
 func NewDb(path string) (*DB, error) {
 	_, err := os.Stat(path)
 	if err != nil {

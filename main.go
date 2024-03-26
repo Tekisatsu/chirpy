@@ -298,6 +298,42 @@ func (s *Server)userLogin(w http.ResponseWriter, r *http.Request) {
 		w.Write(dat)
 	}
 }
+func (s *Server)deleteChirps(w http.ResponseWriter, r *http.Request){
+	authHeader := r.Header.Get("Authorization")	
+	tokenStr := strings.TrimPrefix(authHeader,"Bearer ")
+	token,err := s.apiConfig.validateToken(tokenStr)
+	if err != nil {
+		log.Printf("Invalid token: %e",err)
+		w.WriteHeader(401)
+		return
+	} else {
+		idParam,errC := strconv.Atoi(chi.URLParam(r,"id"))
+		if errC != nil {
+			log.Printf("Error converting URLParam to int: %v",errC)
+			return
+		}
+		claims,ok := token.Claims.(*jwt.RegisteredClaims)
+		if !ok {
+			log.Printf("Error getting Claims")
+			w.WriteHeader(500)
+			return
+		}
+		authorId,errI := strconv.Atoi(claims.Subject)
+		if errI != nil {
+			log.Printf("Error getting author id: %v",err)
+			w.WriteHeader(500)
+			return
+		}
+		errD := s.DB.DeleteChirp(idParam,authorId)
+		if errD != nil {
+			log.Printf("Error deleting Chirp: %e",errD)
+			w.WriteHeader(403)
+			return
+		}
+		w.WriteHeader(200)
+		return
+	}
+}
 func (s *Server)postChirps(w http.ResponseWriter, r *http.Request) {
 	type parameter struct {
 		Body string `json:"body"`
@@ -465,5 +501,6 @@ func main () {
 	apirouter.Post("/login",server.userLogin)
 	apirouter.Post("/refresh",server.tokenRefresh)
 	apirouter.Post("/revoke",server.revokeToken)
+	apirouter.Delete("/chirps/{id}",server.deleteChirps)
 	log.Fatal(srv.ListenAndServe())
 }
